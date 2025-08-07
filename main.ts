@@ -1,14 +1,5 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, requestUrl, TFile, normalizePath } from 'obsidian';
-import Parser from 'rss-parser';
 import TurndownService from 'turndown';
-
-// Browser-compatible polyfill for setImmediate/clearImmediate
-(globalThis as any).setImmediate = (callback: (...args: any[]) => void, ...args: any[]) => {
-	return setTimeout(callback, 0, ...args);
-};
-(globalThis as any).clearImmediate = (id: any) => {
-	clearTimeout(id);
-};
 
 interface RSSBlogImporterSettings {
 	rssUrl: string;
@@ -32,21 +23,10 @@ const DEFAULT_SETTINGS: RSSBlogImporterSettings = {
 
 export default class RSSBlogImporter extends Plugin {
 	settings: RSSBlogImporterSettings;
-	parser: Parser;
 	turndownService: TurndownService;
 
 	async onload() {
 		await this.loadSettings();
-		
-		this.parser = new Parser({
-			customFields: {
-				item: [
-					['media:content', 'mediaContent'],
-					['content:encoded', 'contentEncoded'],
-					['description', 'description']
-				]
-			}
-		});
 
 		this.turndownService = new TurndownService({
 			headingStyle: 'atx',
@@ -100,15 +80,22 @@ export default class RSSBlogImporter extends Plugin {
 					'Pragma': 'no-cache'
 				}
 			});
-			const feed = await this.parser.parseString(response.text);
+			
+			const parser = new DOMParser();
+			const xmlDoc = parser.parseFromString(response.text, 'application/xml');
+			
+			// Handle RSS 2.0 or Atom feeds
+			const feedTitle = xmlDoc.querySelector('title')?.textContent || 'Unknown Feed';
+			const items = Array.from(xmlDoc.querySelectorAll('item, entry'));
 
 			let newPostsCount = 0;
 			
-			for (const item of feed.items) {
-				const pubDate = new Date(item.pubDate || item.isoDate || '');
+			for (const item of items) {
+				const pubDateText = item.querySelector('pubDate, published, updated')?.textContent;
+				const pubDate = pubDateText ? new Date(pubDateText) : new Date();
 				
 				if (pubDate.getTime() > this.settings.lastFetchTime) {
-					await this.createBlogPost(item, feed.title);
+					await this.createBlogPost(item, feedTitle);
 					newPostsCount++;
 				}
 			}
@@ -128,9 +115,10 @@ export default class RSSBlogImporter extends Plugin {
 		}
 	}
 
-	async createBlogPost(item: any, feedTitle: string) {
-		const title = this.sanitizeFileName(item.title || 'Untitled');
-		const pubDate = new Date(item.pubDate || item.isoDate || '');
+	async createBlogPost(item: Element, feedTitle: string) {
+		const title = this.sanitizeFileName(item.querySelector('title')?.textContent || 'Untitled');
+		const pubDateText = item.querySelector('pubDate, published, updated')?.textContent;
+		const pubDate = pubDateText ? new Date(pubDateText) : new Date();
 		const dateStr = pubDate.toISOString().split('T')[0];
 		
 		const fileName = `${dateStr} - ${title}.md`;
@@ -139,7 +127,8 @@ export default class RSSBlogImporter extends Plugin {
 		await this.app.vault.adapter.mkdir(this.settings.folderPath);
 		await this.app.vault.adapter.mkdir(this.settings.imageFolder);
 
-		let htmlContent = item.contentEncoded || item.content || item.description || '';
+		// Try different content fields for RSS/Atom
+		let htmlContent = item.querySelector('content\\:encoded, content, description, summary')?.textContent || '';
 		
 		const imageUrls = this.extractImageUrls(htmlContent, item);
 		const imageMap = new Map();
@@ -167,7 +156,7 @@ export default class RSSBlogImporter extends Plugin {
 		const frontmatter = `---
 title: "${title}"
 date: ${pubDate.toISOString()}
-source: ${item.link || ''}
+source: ${item.querySelector('link, guid')?.textContent || ''}
 feed: "${feedTitle || ''}"
 imported: ${new Date().toISOString()}
 ---
@@ -187,7 +176,7 @@ imported: ${new Date().toISOString()}
 		}
 	}
 
-	extractImageUrls(content: string, item: any): string[] {
+	extractImageUrls(content: string, item: Element): string[] {
 		const urls = new Set<string>();
 		
 		const imgRegex = /<img[^>]+src="([^"]+)"/gi;
@@ -196,11 +185,14 @@ imported: ${new Date().toISOString()}
 			urls.add(match[1]);
 		}
 
-		if (item.mediaContent && Array.isArray(item.mediaContent)) {
-			for (const media of item.mediaContent) {
-				if (media.$ && media.$.url && media.$.medium === 'image') {
-					urls.add(media.$.url);
-				}
+		// Check for media:content elements
+		const mediaElements = item.querySelectorAll('media\\:content');
+		for (let i = 0; i < mediaElements.length; i++) {
+			const media = mediaElements[i];
+			const url = media.getAttribute('url');
+			const medium = media.getAttribute('medium');
+			if (url && medium === 'image') {
+				urls.add(url);
 			}
 		}
 
@@ -232,17 +224,20 @@ imported: ${new Date().toISOString()}
 		return name.replace(/[<>:"/\\|?*]/g, '-').replace(/\s+/g, ' ').trim();
 	}
 
-	extractCategories(item: any): string[] {
+	extractCategories(item: Element): string[] {
 		const categories: string[] = [];
 		
-		// RSS parser automatically puts categories in the categories array
-		if (item.categories && Array.isArray(item.categories)) {
-			categories.push(...item.categories);
+		// Extract categories from RSS category elements
+		const categoryElements = item.querySelectorAll('category');
+		for (let i = 0; i < categoryElements.length; i++) {
+			const cat = categoryElements[i];
+			const text = cat.textContent?.trim();
+			if (text) categories.push(text);
 		}
 
 		// Clean and deduplicate categories
 		return [...new Set(categories)]
-			.map(cat => typeof cat === 'string' ? cat.trim() : String(cat).trim())
+			.map(cat => cat.trim())
 			.filter(cat => cat.length > 0);
 	}
 
