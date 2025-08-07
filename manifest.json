@@ -1,11 +1,11 @@
 {
-  "id": "rss-blog-importer",
-  "name": "RSS Blog Importer",
-  "version": "1.0.0",
-  "minAppVersion": "0.15.0",
-  "description": "Automatically imports blog posts from RSS feeds with image downloading",
-  "author": "Claude",
-  "authorUrl": "",
-  "fundingUrl": "",
-  "isDesktopOnly": false
+	"id": "rss-blog-importer",
+	"name": "RSS Blog Importer",
+	"version": "1.0.1",
+	"minAppVersion": "0.15.0",
+	"description": "Automatically imports blog posts from RSS feeds with image downloading",
+	"author": "Claude",
+	"authorUrl": "",
+	"fundingUrl": "",
+	"isDesktopOnly": false
 }

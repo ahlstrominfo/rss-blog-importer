@@ -2,17 +2,13 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, requestUrl, TFile, norm
 import Parser from 'rss-parser';
 import TurndownService from 'turndown';
 
-// Polyfill for Node.js timers module on iOS
-if (typeof (globalThis as any).setImmediate === 'undefined') {
-	(globalThis as any).setImmediate = (callback: (...args: any[]) => void, ...args: any[]) => {
-		return setTimeout(callback, 0, ...args);
-	};
-}
-if (typeof (globalThis as any).clearImmediate === 'undefined') {
-	(globalThis as any).clearImmediate = (id: any) => {
-		clearTimeout(id);
-	};
-}
+// Browser-compatible polyfill for setImmediate/clearImmediate
+(globalThis as any).setImmediate = (callback: (...args: any[]) => void, ...args: any[]) => {
+	return setTimeout(callback, 0, ...args);
+};
+(globalThis as any).clearImmediate = (id: any) => {
+	clearTimeout(id);
+};
 
 interface RSSBlogImporterSettings {
 	rssUrl: string;

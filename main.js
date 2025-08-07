@@ -7553,16 +7553,12 @@ function canConvert(input) {
 var turndown_browser_es_default = TurndownService;
 
 // main.ts
-if (typeof globalThis.setImmediate === "undefined") {
-  globalThis.setImmediate = (callback, ...args) => {
-    return setTimeout(callback, 0, ...args);
-  };
-}
-if (typeof globalThis.clearImmediate === "undefined") {
-  globalThis.clearImmediate = (id) => {
-    clearTimeout(id);
-  };
-}
+globalThis.setImmediate = (callback, ...args) => {
+  return setTimeout(callback, 0, ...args);
+};
+globalThis.clearImmediate = (id) => {
+  clearTimeout(id);
+};
 var DEFAULT_SETTINGS = {
   rssUrl: "",
   folderPath: "Blog Posts",
