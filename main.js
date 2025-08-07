@@ -7553,6 +7553,16 @@ function canConvert(input) {
 var turndown_browser_es_default = TurndownService;
 
 // main.ts
+if (typeof globalThis.setImmediate === "undefined") {
+  globalThis.setImmediate = (callback, ...args) => {
+    return setTimeout(callback, 0, ...args);
+  };
+}
+if (typeof globalThis.clearImmediate === "undefined") {
+  globalThis.clearImmediate = (id) => {
+    clearTimeout(id);
+  };
+}
 var DEFAULT_SETTINGS = {
   rssUrl: "",
   folderPath: "Blog Posts",
@@ -7630,7 +7640,12 @@ var RSSBlogImporter = class extends import_obsidian.Plugin {
       new import_obsidian.Notice(`Imported ${newPostsCount} new blog posts`);
     } catch (error) {
       console.error("Error fetching RSS:", error);
-      new import_obsidian.Notice("Failed to fetch RSS posts");
+      console.error("Error details:", {
+        message: error.message,
+        stack: error.stack,
+        url: this.settings.rssUrl
+      });
+      new import_obsidian.Notice(`Failed to fetch RSS posts: ${error.message}`);
     }
   }
   async createBlogPost(item, feedTitle) {

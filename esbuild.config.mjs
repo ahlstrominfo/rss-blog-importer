@@ -32,6 +32,10 @@ const context = await esbuild.context({
 		'@lezer/highlight',
 		'@lezer/lr',
 		...builtins],
+	define: {
+		'global': 'globalThis',
+		'process.env.NODE_ENV': '"production"'
+	},
 	format: 'cjs',
 	target: 'es2018',
 	logLevel: "info",

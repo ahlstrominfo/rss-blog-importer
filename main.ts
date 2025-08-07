@@ -2,6 +2,18 @@ import { App, Notice, Plugin, PluginSettingTab, Setting, requestUrl, TFile, norm
 import Parser from 'rss-parser';
 import TurndownService from 'turndown';
 
+// Polyfill for Node.js timers module on iOS
+if (typeof (globalThis as any).setImmediate === 'undefined') {
+	(globalThis as any).setImmediate = (callback: (...args: any[]) => void, ...args: any[]) => {
+		return setTimeout(callback, 0, ...args);
+	};
+}
+if (typeof (globalThis as any).clearImmediate === 'undefined') {
+	(globalThis as any).clearImmediate = (id: any) => {
+		clearTimeout(id);
+	};
+}
+
 interface RSSBlogImporterSettings {
 	rssUrl: string;
 	folderPath: string;
@@ -111,7 +123,12 @@ export default class RSSBlogImporter extends Plugin {
 			new Notice(`Imported ${newPostsCount} new blog posts`);
 		} catch (error) {
 			console.error('Error fetching RSS:', error);
-			new Notice('Failed to fetch RSS posts');
+			console.error('Error details:', {
+				message: error.message,
+				stack: error.stack,
+				url: this.settings.rssUrl
+			});
+			new Notice(`Failed to fetch RSS posts: ${error.message}`);
 		}
 	}
 
