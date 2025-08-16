@@ -1,6 +1,6 @@
 {
   "name": "rss-blog-importer",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Obsidian plugin to import blog posts from RSS feeds",
   "main": "main.js",
   "scripts": {
