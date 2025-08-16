@@ -798,14 +798,23 @@ var DEFAULT_SETTINGS = {
   rssUrl: "",
   folderPath: "Blog Posts",
   imageFolder: "Blog Images",
-  lastFetchTime: 0,
+  lastImportedPostDate: 0,
   fetchOnStartup: true,
   appendBacklink: "",
   enableCategoryBacklinks: false
 };
 var RSSBlogImporter = class extends import_obsidian.Plugin {
   async onload() {
+    console.log("=== RSS BLOG IMPORTER PLUGIN STARTING ===");
+    console.log("[RSS Importer] Plugin loading...");
     await this.loadSettings();
+    console.log("[RSS Importer] Plugin loaded with settings:", {
+      rssUrl: this.settings.rssUrl,
+      folderPath: this.settings.folderPath,
+      imageFolder: this.settings.imageFolder,
+      fetchOnStartup: this.settings.fetchOnStartup,
+      lastImportedPostDate: new Date(this.settings.lastImportedPostDate).toISOString()
+    });
     this.turndownService = new turndown_browser_es_default({
       headingStyle: "atx",
       hr: "---",
@@ -824,7 +833,13 @@ var RSSBlogImporter = class extends import_obsidian.Plugin {
     });
     this.addSettingTab(new RSSBlogImporterSettingTab(this.app, this));
     if (this.settings.fetchOnStartup && this.settings.rssUrl) {
-      setTimeout(() => this.fetchRSSPosts(), 2e3);
+      console.log("[RSS Importer] Fetch on startup enabled, scheduling fetch in 2 seconds...");
+      setTimeout(() => {
+        console.log("[RSS Importer] Executing scheduled startup fetch");
+        this.fetchRSSPosts();
+      }, 2e3);
+    } else {
+      console.log("[RSS Importer] Fetch on startup disabled or no RSS URL configured");
     }
   }
   async loadSettings() {
@@ -834,14 +849,25 @@ var RSSBlogImporter = class extends import_obsidian.Plugin {
     await this.saveData(this.settings);
   }
   async fetchRSSPosts() {
-    var _a, _b;
+    var _a, _b, _c;
+    console.log("=== FETCH RSS POSTS CALLED ===");
+    console.log("Current time:", new Date().toISOString());
     if (!this.settings.rssUrl) {
+      console.log("[RSS Importer] No RSS URL configured");
       new import_obsidian.Notice("Please configure RSS URL in settings");
       return;
     }
     try {
+      console.log("[RSS Importer] Starting RSS fetch process");
+      console.log("[RSS Importer] Settings:", {
+        rssUrl: this.settings.rssUrl,
+        folderPath: this.settings.folderPath,
+        lastImportedPostDate: new Date(this.settings.lastImportedPostDate).toISOString(),
+        lastImportedPostDateMs: this.settings.lastImportedPostDate
+      });
       new import_obsidian.Notice("Fetching RSS posts...");
       const cacheBustUrl = this.settings.rssUrl + (this.settings.rssUrl.includes("?") ? "&" : "?") + "_t=" + Date.now();
+      console.log("[RSS Importer] Fetching URL:", cacheBustUrl);
       const response = await (0, import_obsidian.requestUrl)({
         url: cacheBustUrl,
         headers: {
@@ -849,25 +875,71 @@ var RSSBlogImporter = class extends import_obsidian.Plugin {
           "Pragma": "no-cache"
         }
       });
+      console.log("[RSS Importer] Response status:", response.status);
+      console.log("[RSS Importer] Response size:", response.text.length, "characters");
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(response.text, "application/xml");
+      const parseError = xmlDoc.querySelector("parsererror");
+      if (parseError) {
+        console.error("[RSS Importer] XML parsing error:", parseError.textContent);
+        throw new Error("Failed to parse RSS feed XML");
+      }
       const feedTitle = ((_a = xmlDoc.querySelector("title")) == null ? void 0 : _a.textContent) || "Unknown Feed";
       const items = Array.from(xmlDoc.querySelectorAll("item, entry"));
+      console.log("[RSS Importer] Feed title:", feedTitle);
+      console.log("[RSS Importer] Total items found:", items.length);
       let newPostsCount = 0;
-      for (const item of items) {
-        const pubDateText = (_b = item.querySelector("pubDate, published, updated")) == null ? void 0 : _b.textContent;
+      let skippedPostsCount = 0;
+      let latestImportedDate = this.settings.lastImportedPostDate;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const title = ((_b = item.querySelector("title")) == null ? void 0 : _b.textContent) || `Untitled ${i + 1}`;
+        const pubDateText = (_c = item.querySelector("pubDate, published, updated")) == null ? void 0 : _c.textContent;
         const pubDate = pubDateText ? new Date(pubDateText) : new Date();
-        if (pubDate.getTime() > this.settings.lastFetchTime) {
-          await this.createBlogPost(item, feedTitle);
-          newPostsCount++;
+        console.log(`[RSS Importer] Processing item ${i + 1}/${items.length}:`, {
+          title,
+          pubDateText,
+          pubDate: pubDate.toISOString(),
+          pubDateMs: pubDate.getTime(),
+          lastImportedPostDateMs: this.settings.lastImportedPostDate,
+          isNew: pubDate.getTime() > this.settings.lastImportedPostDate
+        });
+        if (pubDate.getTime() > this.settings.lastImportedPostDate) {
+          console.log(`[RSS Importer] Creating new post: ${title}`);
+          try {
+            await this.createBlogPost(item, feedTitle);
+            newPostsCount++;
+            if (pubDate.getTime() > latestImportedDate) {
+              latestImportedDate = pubDate.getTime();
+            }
+            console.log(`[RSS Importer] Successfully created post: ${title}`);
+          } catch (error) {
+            console.error(`[RSS Importer] Failed to create post "${title}":`, error);
+          }
+        } else {
+          skippedPostsCount++;
+          console.log(`[RSS Importer] Skipping older post: ${title} (${pubDate.toISOString()})`);
         }
       }
-      this.settings.lastFetchTime = Date.now();
-      await this.saveSettings();
-      new import_obsidian.Notice(`Imported ${newPostsCount} new blog posts`);
+      if (latestImportedDate > this.settings.lastImportedPostDate) {
+        console.log("[RSS Importer] Updating lastImportedPostDate:", {
+          old: new Date(this.settings.lastImportedPostDate).toISOString(),
+          new: new Date(latestImportedDate).toISOString()
+        });
+        this.settings.lastImportedPostDate = latestImportedDate;
+        await this.saveSettings();
+      } else {
+        console.log("[RSS Importer] No new posts imported, keeping existing lastImportedPostDate");
+      }
+      console.log("[RSS Importer] Import summary:", {
+        totalItems: items.length,
+        newPosts: newPostsCount,
+        skippedPosts: skippedPostsCount
+      });
+      new import_obsidian.Notice(`Imported ${newPostsCount} new blog posts (${skippedPostsCount} skipped)`);
     } catch (error) {
-      console.error("Error fetching RSS:", error);
-      console.error("Error details:", {
+      console.error("[RSS Importer] Error fetching RSS:", error);
+      console.error("[RSS Importer] Error details:", {
         message: error.message,
         stack: error.stack,
         url: this.settings.rssUrl
@@ -883,43 +955,86 @@ var RSSBlogImporter = class extends import_obsidian.Plugin {
     const dateStr = pubDate.toISOString().split("T")[0];
     const fileName = `${dateStr} - ${title}.md`;
     const filePath = (0, import_obsidian.normalizePath)(`${this.settings.folderPath}/${fileName}`);
+    console.log(`[RSS Importer] Creating blog post:`, {
+      originalTitle: (_c = item.querySelector("title")) == null ? void 0 : _c.textContent,
+      sanitizedTitle: title,
+      pubDateText,
+      pubDate: pubDate.toISOString(),
+      fileName,
+      filePath
+    });
     await this.app.vault.adapter.mkdir(this.settings.folderPath);
     await this.app.vault.adapter.mkdir(this.settings.imageFolder);
-    let htmlContent = ((_c = item.querySelector("content\\:encoded, content, description, summary")) == null ? void 0 : _c.textContent) || "";
+    const contentSelectors = ["content\\:encoded", "content", "description", "summary"];
+    let htmlContent = "";
+    let usedSelector = "";
+    for (const selector of contentSelectors) {
+      const element = item.querySelector(selector);
+      if (element == null ? void 0 : element.textContent) {
+        htmlContent = element.textContent;
+        usedSelector = selector;
+        break;
+      }
+    }
+    console.log(`[RSS Importer] Content extraction:`, {
+      usedSelector,
+      contentLength: htmlContent.length,
+      hasContent: htmlContent.length > 0
+    });
     const imageUrls = this.extractImageUrls(htmlContent, item);
+    console.log(`[RSS Importer] Found ${imageUrls.length} images:`, imageUrls);
     const imageMap = /* @__PURE__ */ new Map();
-    for (const imageUrl of imageUrls) {
+    for (let i = 0; i < imageUrls.length; i++) {
+      const imageUrl = imageUrls[i];
+      console.log(`[RSS Importer] Processing image ${i + 1}/${imageUrls.length}: ${imageUrl}`);
       try {
         const localImagePath = await this.downloadImage(imageUrl, title);
         if (localImagePath) {
           imageMap.set(imageUrl, localImagePath);
+          console.log(`[RSS Importer] Successfully downloaded image: ${imageUrl} -> ${localImagePath}`);
+        } else {
+          console.log(`[RSS Importer] Failed to download image: ${imageUrl}`);
         }
       } catch (error) {
-        console.error("Error downloading image:", error);
+        console.error(`[RSS Importer] Error downloading image ${imageUrl}:`, error);
       }
     }
+    console.log(`[RSS Importer] Image download summary: ${imageMap.size}/${imageUrls.length} successful`);
     for (const [originalUrl, localPath] of imageMap) {
-      htmlContent = htmlContent.replace(new RegExp(originalUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), localPath);
+      const regex = new RegExp(originalUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+      const matches = htmlContent.match(regex);
+      if (matches) {
+        console.log(`[RSS Importer] Replacing ${matches.length} occurrences of ${originalUrl} with ${localPath}`);
+        htmlContent = htmlContent.replace(regex, localPath);
+      }
     }
     let content = this.turndownService.turndown(htmlContent);
+    console.log(`[RSS Importer] Markdown conversion: ${htmlContent.length} chars HTML -> ${content.length} chars Markdown`);
     const categories = this.extractCategories(item);
+    console.log(`[RSS Importer] Extracted categories:`, categories);
     content = this.appendBacklinkToContent(content, categories);
+    const sourceUrl = ((_d = item.querySelector("link, guid")) == null ? void 0 : _d.textContent) || "";
+    console.log(`[RSS Importer] Source URL: ${sourceUrl}`);
     const frontmatter = `---
 title: "${title}"
 date: ${pubDate.toISOString()}
-source: ${((_d = item.querySelector("link, guid")) == null ? void 0 : _d.textContent) || ""}
+source: ${sourceUrl}
 feed: "${feedTitle || ""}"
 imported: ${new Date().toISOString()}
 ---
 
 `;
     const fullContent = frontmatter + content;
+    console.log(`[RSS Importer] Final content length: ${fullContent.length} characters`);
     try {
       await this.app.vault.create(filePath, fullContent);
+      console.log(`[RSS Importer] Successfully created file: ${filePath}`);
     } catch (error) {
       if (error.message.includes("already exists")) {
-        console.log(`Post already exists: ${fileName}`);
+        console.log(`[RSS Importer] Post already exists: ${fileName}`);
+        throw new Error(`Post already exists: ${fileName}`);
       } else {
+        console.error(`[RSS Importer] Failed to create file ${filePath}:`, error);
         throw error;
       }
     }
@@ -944,17 +1059,22 @@ imported: ${new Date().toISOString()}
   }
   async downloadImage(imageUrl, postTitle) {
     try {
+      console.log(`[RSS Importer] Downloading image: ${imageUrl}`);
       const response = await (0, import_obsidian.requestUrl)({ url: imageUrl });
+      console.log(`[RSS Importer] Image response status: ${response.status}, size: ${response.arrayBuffer.byteLength} bytes`);
       const urlParts = imageUrl.split("/");
       const fileName = urlParts[urlParts.length - 1] || "image";
       const extension = fileName.split(".").pop() || "jpg";
       const sanitizedTitle = this.sanitizeFileName(postTitle);
       const imageName = `${sanitizedTitle}-${Date.now()}.${extension}`;
       const imagePath = (0, import_obsidian.normalizePath)(`${this.settings.imageFolder}/${imageName}`);
+      console.log(`[RSS Importer] Saving image as: ${imagePath}`);
       await this.app.vault.createBinary(imagePath, response.arrayBuffer);
-      return `![[${imageName}]]`;
+      const result = `![[${imageName}]]`;
+      console.log(`[RSS Importer] Image download successful: ${imageUrl} -> ${result}`);
+      return result;
     } catch (error) {
-      console.error("Failed to download image:", imageUrl, error);
+      console.error(`[RSS Importer] Failed to download image ${imageUrl}:`, error);
       return null;
     }
   }
@@ -1020,8 +1140,8 @@ var RSSBlogImporterSettingTab = class extends import_obsidian.PluginSettingTab {
       await this.plugin.saveSettings();
     }));
     new import_obsidian.Setting(containerEl).setName("Manual Fetch").setDesc("Manually fetch new posts from RSS feed").addButton((button) => button.setButtonText("Fetch Now").setCta().onClick(() => this.plugin.fetchRSSPosts()));
-    new import_obsidian.Setting(containerEl).setName("Reset Import Cache").setDesc("Reset the import timestamp to re-import all posts from RSS feed").addButton((button) => button.setButtonText("Reset Cache").setWarning().onClick(async () => {
-      this.plugin.settings.lastFetchTime = 0;
+    new import_obsidian.Setting(containerEl).setName("Reset Import Cache").setDesc("Reset the last imported post date to re-import all posts from RSS feed").addButton((button) => button.setButtonText("Reset Cache").setWarning().onClick(async () => {
+      this.plugin.settings.lastImportedPostDate = 0;
       await this.plugin.saveSettings();
       new import_obsidian.Notice("Import cache reset. Next fetch will import all posts.");
     }));
