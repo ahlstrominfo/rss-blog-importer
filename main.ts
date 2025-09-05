@@ -220,16 +220,46 @@ export default class RSSBlogImporter extends Plugin {
 		await this.app.vault.adapter.mkdir(this.settings.imageFolder);
 
 		// Try different content fields for RSS/Atom
-		const contentSelectors = ['content\\:encoded', 'content', 'description', 'summary'];
 		let htmlContent = '';
 		let usedSelector = '';
 		
-		for (const selector of contentSelectors) {
-			const element = item.querySelector(selector);
-			if (element?.textContent) {
-				htmlContent = element.textContent;
-				usedSelector = selector;
-				break;
+		// Try content:encoded first (most complete content)
+		// Try multiple approaches to find the content:encoded element
+		let element = item.querySelector('content\\:encoded') || 
+					  item.querySelector('[*|encoded]') ||
+					  item.getElementsByTagName('content:encoded')[0];
+		
+		// If still not found, try searching through child nodes manually
+		if (!element) {
+			for (let i = 0; i < item.childNodes.length; i++) {
+				const node = item.childNodes[i] as Element;
+				if (node.nodeName === 'content:encoded') {
+					element = node;
+					break;
+				}
+			}
+		}
+		
+		console.log('[RSS Importer] content:encoded element search:', {
+			querySelector: !!item.querySelector('content\\:encoded'),
+			getElementsByTagName: !!item.getElementsByTagName('content:encoded')[0],
+			manualSearch: !!element,
+			finalElement: !!element
+		});
+		
+		if (element?.textContent) {
+			htmlContent = element.textContent;
+			usedSelector = 'content:encoded';
+		} else {
+			// Fallback to other content fields
+			const contentSelectors = ['content', 'description', 'summary'];
+			for (const selector of contentSelectors) {
+				element = item.querySelector(selector);
+				if (element?.textContent) {
+					htmlContent = element.textContent;
+					usedSelector = selector;
+					break;
+				}
 			}
 		}
 		
@@ -296,16 +326,19 @@ imported: ${new Date().toISOString()}
 		console.log(`[RSS Importer] Final content length: ${fullContent.length} characters`);
 
 		try {
-			await this.app.vault.create(filePath, fullContent);
-			console.log(`[RSS Importer] Successfully created file: ${filePath}`);
-		} catch (error) {
-			if (error.message.includes('already exists')) {
-				console.log(`[RSS Importer] Post already exists: ${fileName}`);
-				throw new Error(`Post already exists: ${fileName}`);
+			// Check if file already exists
+			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+			if (existingFile) {
+				console.log(`[RSS Importer] Post already exists, updating: ${fileName}`);
+				await this.app.vault.modify(existingFile as TFile, fullContent);
+				console.log(`[RSS Importer] Successfully updated file: ${filePath}`);
 			} else {
-				console.error(`[RSS Importer] Failed to create file ${filePath}:`, error);
-				throw error;
+				await this.app.vault.create(filePath, fullContent);
+				console.log(`[RSS Importer] Successfully created file: ${filePath}`);
 			}
+		} catch (error) {
+			console.error(`[RSS Importer] Failed to create/update file ${filePath}:`, error);
+			throw error;
 		}
 	}
 

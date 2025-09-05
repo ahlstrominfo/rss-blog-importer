@@ -965,15 +965,36 @@ var RSSBlogImporter = class extends import_obsidian.Plugin {
     });
     await this.app.vault.adapter.mkdir(this.settings.folderPath);
     await this.app.vault.adapter.mkdir(this.settings.imageFolder);
-    const contentSelectors = ["content\\:encoded", "content", "description", "summary"];
     let htmlContent = "";
     let usedSelector = "";
-    for (const selector of contentSelectors) {
-      const element = item.querySelector(selector);
-      if (element == null ? void 0 : element.textContent) {
-        htmlContent = element.textContent;
-        usedSelector = selector;
-        break;
+    let element = item.querySelector("content\\:encoded") || item.querySelector("[*|encoded]") || item.getElementsByTagName("content:encoded")[0];
+    if (!element) {
+      for (let i = 0; i < item.childNodes.length; i++) {
+        const node = item.childNodes[i];
+        if (node.nodeName === "content:encoded") {
+          element = node;
+          break;
+        }
+      }
+    }
+    console.log("[RSS Importer] content:encoded element search:", {
+      querySelector: !!item.querySelector("content\\:encoded"),
+      getElementsByTagName: !!item.getElementsByTagName("content:encoded")[0],
+      manualSearch: !!element,
+      finalElement: !!element
+    });
+    if (element == null ? void 0 : element.textContent) {
+      htmlContent = element.textContent;
+      usedSelector = "content:encoded";
+    } else {
+      const contentSelectors = ["content", "description", "summary"];
+      for (const selector of contentSelectors) {
+        element = item.querySelector(selector);
+        if (element == null ? void 0 : element.textContent) {
+          htmlContent = element.textContent;
+          usedSelector = selector;
+          break;
+        }
       }
     }
     console.log(`[RSS Importer] Content extraction:`, {
@@ -1027,16 +1048,18 @@ imported: ${new Date().toISOString()}
     const fullContent = frontmatter + content;
     console.log(`[RSS Importer] Final content length: ${fullContent.length} characters`);
     try {
-      await this.app.vault.create(filePath, fullContent);
-      console.log(`[RSS Importer] Successfully created file: ${filePath}`);
-    } catch (error) {
-      if (error.message.includes("already exists")) {
-        console.log(`[RSS Importer] Post already exists: ${fileName}`);
-        throw new Error(`Post already exists: ${fileName}`);
+      const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+      if (existingFile) {
+        console.log(`[RSS Importer] Post already exists, updating: ${fileName}`);
+        await this.app.vault.modify(existingFile, fullContent);
+        console.log(`[RSS Importer] Successfully updated file: ${filePath}`);
       } else {
-        console.error(`[RSS Importer] Failed to create file ${filePath}:`, error);
-        throw error;
+        await this.app.vault.create(filePath, fullContent);
+        console.log(`[RSS Importer] Successfully created file: ${filePath}`);
       }
+    } catch (error) {
+      console.error(`[RSS Importer] Failed to create/update file ${filePath}:`, error);
+      throw error;
     }
   }
   extractImageUrls(content, item) {
